@@ -1,0 +1,210 @@
+- Unsafe
+    - free lock实现的基础
+    - 不应该直接使用
+    - 初始化： Unsafe.getUnsafe()
+    - 提供的方法：
+        - objectFieldOffset 获取字段的偏移地址
+        - putOrderedInt/getAndSetInt/getAndAddInt：
+            - 参数： 对象、更新列偏移、值
+        - compareAndSwapInt： 
+            - 如果当前值和旧值相等，则将字段设置为新值，并返回true，否则返回false
+            - 参数： 对象、更新列偏移、旧值、新值
+
+- AbstractQueuedSynchronizer
+    - 字段
+        - exclusiveOwnerThread： 拥有者线程
+        - head/tail           ： 头尾节点
+        - state               ： 状态计数
+        - Node.waitStatus
+            - CANCELLED    1
+            - SIGNAL      -1
+            - CONDITION   -2
+            - PROPAGATE   -3
+    - 方法
+        - compareAndSetState
+        - acquire：
+            - 尝试获取锁成功，直接返回
+            - 否则，将当前线程加入等待队列
+            - 在队列中执行操作
+                - 如果当前节点的前一个节点是head，尝试获取锁
+                    - 如果获取成功，返回interrupted值
+                - 执行park操作，并设置interrupted属性
+            - 如果interrupted，将线程设置成interrupted
+        - acquireInterruptibly: 流程与acquire类似
+            - 差异在如果interrupted，抛出InterruptedException异常
+        - tryAcquireNanos：增加了超时机制， LockSupport.parkNanos实现
+        - release
+            - try release 成功
+                - 如果头节点状态不为0，执行 unparkSuccessor
+                    - 查找待执行unpark的节点
+                        - 如果头节点的下一个节点状态不是cancelled
+                        - 否则从尾找到最后一个状态小于等于0的节点
+                    - 执行unpark操作
+            - 否则返回false
+    - ConditionObject （实现Condition接口）
+        - firstWaiter/lastWaiter : 等待队列
+        - unlinkCancelledWaiters： 移除不是Condition状态的等待节点
+        - addConditionWaiter 队列尾新增等待节点
+        - doSignal   ： 通知等待队列中第一个Condition状态的节点
+            - 调用 transferForSignal
+        - doSignalAll： 通知等待队列中的额全部节点
+        - transferForSignal
+            - 如果节点状态不是Condition，返回false
+            - 节点入队（AbstractQueuedSynchronizer.enq操作）
+            - 如果入队后节点状态是cancel 
+            - 将节点状态设置为Signal，
+                - 如果设置失败，调用LockSupport.unpark
+            - 返回true
+    - LockSupport
+        - park    : 禁止当前线程执行
+        - unpark  ： 
+    - http://ifeve.com/introduce-abstractqueuedsynchronizer/
+- AtomicInteger
+    - field offset (static)： 字段的偏移地址
+    - value (volatile)
+    - get/set ： 设置、获取值
+    - lazySet
+    - getAndSet/compareAndSet/weakCompareAndSet: 直接调用unsafe方法
+        - weak 实现同非weak版本
+    - getAndIncrement/getAndDecrement/getAndAdd/incrementAndGet/decrementAndGet/addAndGet
+        - unsafe.getAndAddInt
+    - getAndUpdate/updateAndGet/getAndAccumulate/accumulateAndGet
+        - 参数：updateFunction
+        - 执行步骤：
+            1. get 方法获取当前值
+            2. 以当前值作为参数计算目标值
+            3. compare and set 目标值，如果失败重复步骤a
+    - intValue/longValue/floatValue/doubleValue: 类型转换
+
+- AtomicLongFieldUpdater
+    - newUpdater 工厂方法
+        - 参数： 类、字段名称
+        - 返回值： updater实例
+    - 抽象方法
+        - compareAndSet
+        - weakCompareAndSet
+        - set
+        - lazySet
+        - get
+    - 已实现方法
+        - getAndSet、getAndIncrement、getAndDecrement、 getAndAdd
+        - incrementAndGet、decrementAndGet、addAndGet、getAndUpdate
+        - updateAndGet、getAndAccumulate、accumulateAndGet
+        - 以上实例方法都是使用 compareAndSet来实现
+    - 子类
+        - CASUpdater： 实现细节同AtomicInteger 类似
+        - LockedUpdater： 访问共享数据的时候，使用synchronized保证线程安全
+
+- BlockingQueue
+    - add:   队列满，抛出IllegalStateException
+    - offer：队列满，返回false，支持超时机制
+    - put：  队列满，阻塞等待
+    - take： 读取并移除首节点；队列空，阻塞等待
+    - poll:  读取并移除首节点；队列空，返回null;支持超时机制
+    - element： 读取首节点，不移除，队列空，抛出异常
+    - peek:读取首节点，不移除，队列空，返回null
+    - remainingCapacity： 队列剩余空间
+    - remove: 删除元素
+    - contains： 是否包含元素
+    - drainTo： 删除队列全部元素，并将元素添加到参数集合
+        - 支持设置最多删除元素的数量
+    - 子类：
+        - ArrayBlockingQueue
+        - LinkedBlockingQueue
+
+- ArrayBlockingQueue
+    - 单锁： lock
+    - 数组存储元素值： Object[] items
+    - 双索引: takeIndex/putIndex
+    - 双条件对象: lock --> notEmpty，notFull
+
+- LinkedBlockingQueue
+    - 双向列表： header/last
+    - 读写锁： takeLock/putLock --> 条件对象： notEmpty、notFull
+    - put/offer：  
+        - putLock
+        - notFull.await
+        - signalNotEmpty
+            - takeLock
+            - notEmpty.signal
+    - take/poll/peek
+        - takeLock
+        - notEmpty.await();
+        - signalNotFull
+            - putLock
+            - notFull.signal
+    - remove/contains/clear
+        - both putLock/takeLock
+
+- Condition
+    - await类方法: 线程阻塞等待signal唤醒；自动释放锁
+        - await 线程被打断也可唤醒
+        - awaitUninterruptibly 线程打断不可唤醒
+        - awaitNanos 线程被打断、超时后也可唤醒
+        - awaitUntil 线程被打断、截止时间达到可唤醒
+    - signal/signalAll： 唤醒await线程
+        - 建议使用signalAll
+
+- ReentrantLock 
+    - lock               ： 阻塞直到获取锁
+    - lockInterruptibly  ： 阻塞直到获取锁，可打断
+    - tryLock            ： 尝试获取锁，立刻返回（true 获取锁，false 无法获取锁）
+        - 无超时参数： 非公平的
+        - 带超时参数： 是否公平以锁设置为准
+    - unlock： 解锁
+    - newCondition： 返回新建的条件对象
+    - isHeldByCurrentThread： 当前线程是否拥有锁
+    - isLocked ： 锁是否被其他线程占有
+    - 具体实现：
+        - Sync
+            - state 有用锁的数量
+            - nonfairTryAcquire： 
+                - 1） 如果当前状态是0，
+                    - 1.1) 尝试通过compareAndSet直接设置状态
+                    - 1.2） 如果状态设置成功，
+                        - 将拥有者线程设置成当前线程，返回true
+                    - 1.3）如果状态设置失败，返回false
+                - 4）如果状态不为0
+                    - 如果当前线程是拥有着线程，设置状态，返回true
+                    - 否则，返回false
+            - tryRelease
+                - 只有当前线程是拥有者线程时，才能释放
+                - 如果释放后状态是0
+                    - 将拥有者线程设置为空
+                    - 将free设置为true
+                - 设置状态，返回free值
+            - isHeldExclusively： 是否拥有锁
+            - isLocked： 状态不为0
+        - NonfairSync
+            - lock
+                - 如果状态为0，尝试通过compareAndSet直接设置状态
+                - 设置成功后，设置拥有者线程为当前线程
+                - 否则，执行acquire操作
+        - FairSync
+            - tryAcquire
+                - 如果状态为0
+                    - 如果队列里没有等待线程
+                        - 尝试通过compareAndSet直接设置状态
+                            - 设置成功后，设置拥有者线程为当前线程
+                            - 否则返回false
+                    - 否则返回false 
+                - 否则
+                    - 如果当前线程是拥有着线程，设置状态，返回true
+                    - 否则，返回false
+        - AbstractQueuedSynchronizer 子类
+
+- TODO
+    - ConcurrentHashMap 源码分析
+    - ConcunrrentSkipListMap  源码分析
+    - CopyOnWriteArrayList  源码分析
+    - StampedLock sample
+    - Semaphore、CountDownLatch、 CyclicBarrier、Phaser sample
+    - SynchronousQueue sample
+    - Go 语言等提供了协程（coroutine）
+    - Jps&ps
+    - work stealing 算法分析
+    - ThreadPoolExecutor 源码分析
+    - Reactive Streams ： http://www.reactive-streams.org/
+    - 安装java 9或以上
+    - VarHandle sample
+    - 版本号（stamp）  http://tutorials.jenkov.com/java-util-concurrent/atomicstampedreference.html

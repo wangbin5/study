@@ -1,0 +1,59 @@
+- 后端逐渐变慢的诊断方案
+    - 更加清晰的定义问题： 采集请求时长、突然变慢还是逐渐变慢
+    - 理清问题的症状：
+        - 检查错误日志： JFR/JMC
+        - 检查系统资源利用率：CPU、内存、IO
+        - 检查GC日志
+            - GC日志选项
+            - jstat工具
+            - jstack工具
+        - Profiling（不建议对生产使用）
+        - 依赖应用性能（分布式系统）
+    - 性能分析方法论：
+        - 自上而下（优先考虑）
+        - 自下而上：
+
+- GC 调优思路
+    - 调优步骤
+        - 理解应用的需求，确定调优目标：内存占用、延时、吞吐量
+        - 掌握JVM和GC状态： jstat工具、GC日志
+        - 选择的GC类型是否符合应用特征
+        - 通过分析，确定具体调整的参数或软硬件配置
+        - 验证是否达到调优目标
+    - JVM 堆内存结构
+        - 新生代: eden区域+2*survivor区域
+        - 老年代：
+        - 永久代
+        - 元数据代
+        - 堆调整参数
+    - JVM 内存监控工具
+        - JConsole
+        - VisualVm
+        - jstat
+        - jmap
+        - jhat/Eclipse MAT
+        - NMT 对外直接内存
+    - 判断对象可回收的算法
+        - 引用计数算法: 难于处理循环引用问题
+        - 可达性分析：  对象和GC Roots之间没有引用链，就可以回收
+    - 垃圾回收算法：
+        - 复制算法：  预留空间+移动对象，需要保存对象间引用关系
+        - 标记-清楚： 不会移动对象，但是会产生内存碎片
+        - 标记-整理： 会移动对象，需要保存对象间引用关系
+    - 主流GC实现
+        - Serial GC： 单线程、标记-整理算法
+        - ParNew GC:  Serial GC 多线程版本
+        - CMS GC   ： 标记-清除算法，内存碎片化+占用更多CPU资源
+        - Parrallel GC： Serial GC近似版本，新生代+老年代并行执行
+        - G1 
+            - 棋盘状region： 1~32M
+            - 年代是个逻辑概念，分为4类： Eden、Old、Survivor、Humongous
+            - Humongous 对象： 超过region 50%空间的对象 
+            - 复合算法：
+                - 新生代,并行复制算法（Stop-the-world）
+                - 老年代，并发标记，增量整理（新生代GC时执行）
+            - Rembembered Set：维护region之间对象引用关系
+    - 建议
+        - 尽量升级到较新版本的JDK
+        - 掌握 GC 调优信息收集途径。掌握尽量全面、详细、准确的信，是各种调优的基础 
+        - https://docs.oracle.com/javase/9/gctuning/garbage-first-garbage-collector-tuning.htm#JSGCT-GUID-2428DA90-B93D-48E6-B336-A849ADF1C552
