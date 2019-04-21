@@ -7,6 +7,7 @@
       <sourceFolder url="file://$MODULE_DIR$/src/main/netty_server" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src/main/netty_client" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/src/main/elastic" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/src/main/concurrent" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />
