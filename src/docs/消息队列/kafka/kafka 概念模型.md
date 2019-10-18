@@ -1,0 +1,92 @@
+#### kafka体系结构图
+![image](./images/kafka_architecture.png)
+
+#### 基本概念 
+- zookeeper集群： 元数据管理、控制器选举
+- 服务端（Broker）
+- 消息发布者（Producer）
+- 消息消费者（Consumer）
+    - Pull模式从服务端拉取消息，并且保存消费的具体位置
+    - 偏移量（offset）
+- 主题（Topic）
+- 分区（Partition）
+    - 消息分区有序而不是主题有序
+- 副本（Replica）
+    - leader 副本负责读写请求
+    - follower副本负责与leader副本消息同步
+    - AR（Assigned Replicas）: 分区的所有副本称为 
+    - ISR（in-sync Replicas）: 与leader副本保持一定程度同步的副本
+        - ISR包含leader副本
+    - OSR(Out-of-sync Replicas): 同步滞后过多的副本  
+- 高水位（High Watermark，简写HW）： 标识消息偏移量
+    - 消费者只能拉取HW offset之前的消息
+- LEO（Log End Offset）： 当前日志中下一条待写入消息的offset
+    - HW = min（LEO in ISR ）
+    
+#### 可靠性分析
+- 可靠性分析原则
+    - 设计时考虑到的异常情况，一定会在系统实际运行中发生
+    - 系统运行过程中，还会遇到很多设计时未考虑到的异常故障
+- 副本可靠性
+    - 失效副本： ISR集合之外的副本，功能失效或同步失效
+    - HW同步机制（0.11之前）
+        - 可能存在丢失消息场景（）
+            - leader和follower副本HW同步存在时间间隙
+            - follower副本重启后，会使用本地HW值做消息截断，然后向leader发送请求拉取消息
+            - 拉取消息过程中，leader重启，原follower选为新leader，导致消息丢失
+                - 获得消息拉取结果，也可能会做消息截断操作
+        - 可能存在leader副本和follower副本消息不一致场景（场景B）
+            - 假设follower（A）消息和HW都比leader（B）少1
+            - follower、leader同时宕机
+            - A重启选为新leader
+            - A接收到消息，将LEO、HW更新
+            - B重启后向A拉取消息，发现LEO、HW相同，但是此时最后一条消息内容不同
+    - 引入leader epoch 概念
+        - 副本(A)中增加 < LeaderEpoch,startOffset> 数据
+        - 重启后先不急着做日志截断，而是发送OffsetsForLeaderEpochRequest请求给leader，收到会有后再考虑截断
+            - 如果副本的leaderEpoch (LE_A)和leader不同，leader会返回LE_A+1 对应的startOffset给A
+            - 副本收到请求后，对比做截断处理
+- 不支持读写分离原因
+    - kafka 是主读主写的生产消费模型
+    - 收益点分析
+        - 读写分离
+            - 优点： 使用从节点分担主节点的负载压力
+            - 缺点： 数据一致性问题
+            - 缺点： 延时问题
+    - kafka同步： 网络-> 主节点内存-> 主节点磁盘-> 网络-> 从节点内存-> 从节点硬盘
+        - 从节点读延时大，不适用
+    - kafka读写较为均衡，不存在读远大于写的场景
+    - kafka主读主写优点
+        - 简化代码逻辑
+        - 负载粒度细化均衡（通过副本分布实现）
+        - 不受延时影响
+        - 副本稳定情况下，不会出现不一致情况
+- 日志同步
+    - 保证数据的一致性，也要保证顺序的一致性
+    - 最简单办法选一个leader负责处理数据写入的顺序性
+    - leader宕机，必须选择具有最新日志消息的follower作为新的leader
+    - 业务约束： 如果告知客户端消息已经成功提交，即使leader宕机，也要保证新选举出来的leader中包含这条消息
+    - 常见做法： 少数服从多数
+        - 2f+1个副本，f+1个同步完成，消息状态为已提交
+        - 优点： 系统延迟取决于最快的f+1个节点
+        - 劣势： 副本失效容忍度低，最多容忍f个副本失效
+        - 适合于共享集群配置（Zookeeper），很少用作数据存储
+        - 常见协议： Zab，Raft等
+    - kafka做法（微软PacificA算法）：
+        - ISR 节点同步完成，消息状态为已提交
+        - 选主只从ISR节点中选择
+        - 副本失效容忍度高 f+1个副本中，容忍f个副本失效
+        - kafka不需要从本地日志文件中进行恢复，也就不需要每次操作都刷盘
+- 可靠性分析
+    - 副本数3满足大多数常见的要求
+    - 如果分配分区时，引入机架信息（broker.rack参数），还需要考虑机架整体宕机的风险
+    - acks = -1 ，可以最大程度提高消息的可靠性
+        - 同时设置 min.insync.replicas参数，保证ISR中只有一个leader时，不提供服务
+        - unclean.leader.election.eanble设置为false，即不允许非ISR集合中的节点选主
+    - 高可靠场景需要将retries设置为大于0的值（默认0）
+        - retries大于0，会增加客户端对于异常的反馈时延
+    - 重试场景下，max.in.flight.requests.pre.connection 值可能影响顺序性，需要设置成1
+        - 设置成1 会影响吞吐量
+    - enable.auto.commit 设置为false，手动提交位移
+    
+

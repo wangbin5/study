@@ -1,0 +1,59 @@
+#### 服务端参数配置
+- zookeeper.connect：zookeeper地址，多个使用，分隔；
+    - 最后一个地址可以加chroot路径
+- listeners： 监听客户端连接的地址
+    - 支持的协议： PLAINTEXT、SSL、SASL_SSL
+- adertised.listeners: 绑定公网IP
+- broker.id: kafka集群borker唯一id
+- log.dir/log.dirs： 日志存放的根目录
+- message.max.bytes: 接收消息的最大值，默认约976KB
+    - 修改此参数前，考虑将消息拆分成合适尺寸
+
+
+#### 深入服务端
+- 43种协议类型
+- 请求 Request
+    - 相同结构的请求头（RequestHeader）
+        - api_key            API 标识
+        - api_version        API 版本好
+        - correlation_id     客户端指定一个唯一数字标识请求的id
+        - client_id          客户单id
+    - 不同结构的请求体（RequestBody）
+- 响应 Response
+    - 响应头(ResponseHeader)
+        - correlation_id 响应请求的id
+    - 响应体(ResponseBody)
+- 发送消息的消息体
+    - transactional_id 事务id
+    - acks
+    - timeout
+    - topic_data
+        - topic
+        - data
+            - partition
+            - record_set
+    - 负载的压力分摊给了客户端
+- 时间轮
+    - 支持延迟操作（延迟生产、延时拉取、延时删除）
+    - 定时器（SystemTimer）: 使用实践论概念自定义实现
+        - 插入、删除操作的时间复杂度为O（1）
+        - 循环数组，数组每个元素是链表结构
+            - 插入时：插入（当前时间+延时时间）mod 数组长度的元素中
+            - 每轮时间变化，将当前时间对应的数组元素取出执行
+        - 层级时间轮：钟表是3层时间格
+        - TimeWheel 任务添加、删除
+        - DelayQueue 时间推进任务
+- 控制器
+    - 控制器负责整个集群中所有分区和副本的状态
+    - 控制器选举
+        - broker在zookeeper中创建/controller临时节点，创建成功的broker称为控制器
+    - 分区leader 选举
+        - leader 下线
+            - 策略 OfflinePartitionLeaderElectonStrategy
+            - 按照AR集合中副本的顺序选择第一个存活的ISR副本
+        - 分区重分配选leader
+            - 策略 ReassignPartitionLeaderElectionStrategy
+            - 按照重分配AR集合中副本的顺序选择第一个存活的ISR副本
+- 服务端参数
+    -  broker.id
+    -  bootstrap.servers

@@ -1,0 +1,190 @@
+#### 主题和分区
+- 主题和分区都是逻辑概念
+- 每个副本对应一个日志文件
+- 每个日志文件对应一至多个日志分段（LogSegment）
+- 每个日志分段可以细分为索引文件、日志存储文件和快照文件
+- 不建议将auto.create.topics.enable 设置为true
+- broker.rack 指定broker当前机架
+- 分区副本的分配
+    - 未指定机架
+    - 指定机架
+- 管理工具：admin.KafkaAdminClient
+- 分区管理
+    - broker节点中leader副本数量决定了这个节点负载的高低
+    - 每个分区，在一个broker中至多有一个副本
+    - leader副本所在的broker节点，称为分区的leader节点
+    - 优先副本（preferred replica）： AR 集合列表中的第一个副本
+    - 优先副本选举
+        - 促使优先副本选举成leader副本
+        - 选举称为分区平衡
+        - 不建议开启优先副本选举
+            - 开启： auto.leader.rebalance.enable 设置成true
+        - 合适的时机，手动执行分区平衡
+        - 生产环境中，使用path-to-jsonfile参数来分批、手动执行优先副本选举操作
+    - 分区重分配步骤
+        1. 首先创建一个包含主题清单的json文件
+        2. 根据主题清单和broker节点清单生成一份重分配方案
+        3. 根据重分配方案执行具体的重分配动作
+    - 分区重分配的基本原则
+        - 先通过控制器为每个分区增加新副本
+        - 新副本从分区leader副本那里复制所有的数据
+        - 复制完成后，控制器将旧副本从副本清单中移除
+    - 分区重分配对集群性能有很大的影响
+        - 复制限流
+            - kafka-config.sh 修改动态配置方式限流
+                - follower.replication.throttled.rate 限制follower副本复制的速度
+                - leader.replication.throttled.rate 限制leader传输速度
+                - leader.replication.throttled.replicas
+                - follower.replication.throttled.replicas
+            - kafka-reasign-partitions.sh
+                - throttle 参数
+                - 这个脚本也可以用来修改分区数
+    - 选择分区数的方法
+        - 性能测试工具
+            - kafka-producer-perf-test.sh
+            - kafka-consumer-perf-test.sh
+        - 理论上分区数越多吞吐量越大
+        - 实际上存在临界值，超过临界值，吞吐量会下降
+        - 分区数上线受linux文件符数上限约束
+            - ulimit -n 65535 设置最大文件符数
+        - 建议将分区数设置为集群broker机器数的倍数
+        - 集群机器数多，可以考虑引入机架等参考因素
+
+#### 日志存储
+- 文件目录布局
+    - 日志（Log）： 一个分区对应一个日志
+        - 文件夹方式存储
+    - 日志分段（LogSegment）： 将日志切分成多个分段，避免巨型文件便于管理
+        - 一个日志文件 
+        - 两个索引文件： 偏移量索引文件、时间索引文件
+        - 最后一个分段文件称为活跃的日志分段（ActiveSegment）
+            - 消息追加到活跃日志分段中
+    - 消费者提交的位移存放在内部队列（__consumer_offsets）中
+- 消息格式
+    - v0版本
+        - 日志头部
+            - offset 分区中的偏移量，逻辑值
+            - message size ： 消息大小
+        - 消息记录（Record）
+            - crc32 crc32 校验码
+            - magic 消息格式版本号，值为0
+            - attributes 消息属性，1字节
+                - 低3位标识压缩类型
+                    - 0 NONE
+                    - 1 GZIP
+                    - 2 SNAPPY
+                    - 3 LZ4
+                - 其余位保留
+            - key length  消息长度
+            - key         消息值
+            - value length 消息体长度
+            - value        消息体值
+                - 墓碑消息（tombstone）消息体为空
+    - v1版本
+        - magic 版本号，值为1
+        - timestamp
+            - attributes 属性之前定义  
+            - attributes 第4位为0，表示创建时间（CreateTime）
+            - attributes 第4位为1，表示日志添加时间（LogAppendTime）
+            - 服务端参数 log.message.timestamp.type 配置，默认CreateTime
+        
+    - v2版本
+        - 引入变长整形
+            - 每个字节有一个位于最高位的msb位（most significant bit）
+                - 最后一个字节msb位为0
+                - 其余字节msb位为1
+            - 小端字节序，最小的字节放在最前面
+            - ZigZag 编码 ： 使用锯齿形方式穿梭正负整数，如 -1 编码为1，1编码为2
+        - 增加 BatchRecord 概念替换之前版本外层消息
+        - first offset   起始位置
+        - length  从partition leader epoch开始，到末尾的长度
+        - partition leader epoch  分区leader版本号
+        - magic        版本号，值为2
+        - crc32        从record中移动到BatchRecord中
+        - attributes   2个字节
+            - 低3位标识压缩类型
+            - 第4位标识时间戳类型
+            - 第5为标识BatchRecord是否处于事务中
+                - 0 非事务
+                - 1 事务
+            - 第6位标识是否控制消息
+                - 0 非控制消息
+                - 1 控制消息
+                - 用来支持事务消息
+        - last offset delta 最后一个消息的offset 与 first offset 的差值
+        - first timestamp
+        - max timestamp
+        - producer id：PID 用来支持幂等和事务
+        - producer epoch： 用来支持幂等和事务
+        - first sequence： 用来支持幂等和事务
+        - records count
+        - record
+            - 删除crc32字段
+            - length           消息总长度
+            - attributes       不再使用
+            - timestamp delta  时间戳增量（与BatchRecord中first timestamp 的差值）
+            - offset delta     位移增量（与与BatchRecord中first offset 的差值）
+            - key length
+            - key 
+            - value length
+            - value
+            - headers count
+            - headers 一个或多个header
+                - header key length 
+                - header key
+                - header value length
+                - header value
+        - 增加了更多功能：事务、幂等性
+        - 某些情况下减少了消息的占用空间，总体性能提升大
+- 消息压缩
+    - compression.type 配置压缩类型，默认producer
+        - 其他可选值： gzip、snappy、lz4
+    - 消息压缩对多条消息一起进行压缩
+    - 压缩后消息分为内层消息和外层消息 （v0、v1版本）
+        - 压缩结果称为外层消息
+            - 外层消息key值 null
+            - value字段保存压缩后的内层消息
+- 日志索引
+    - 索引文件采用稀疏索引方式构造
+    - 偏移量索引文件中偏移值是单调递增的，查找时使用二分查找法
+    - 时间戳索引文件中的时间戳也是单调递增的，查找时使用二分查找法
+    - 日志分段文件切分条件
+        - 日志文件过大（参数：log.segment.bytes）
+        - 时间过长(log.roll.ms / log.roll.hours)
+        - 索引过大(log.index.size.maxbytes)
+        - 索引偏移量差值过大(超过Integer.MAX_INT)
+    - 非活跃端日志文件和索引文件,会被设置成只读
+    - 创建索引文件，预分配大小（log.index.size.max.bytes）
+    - 偏移量索引项格式
+        - relativeOffset 相对偏移量
+        - position  日志文件中的位置
+        - baseOffset： 偏移量索引文件名标识
+    - 时间戳索引项格式
+        - timestamp       当前日志分段最大时间戳
+        - relativeOffset  时间戳对应消息的相对偏移量
+        - 时间戳CreateTime 可能会失效
+- 日志清理
+    - 日志删除（Log Retention）： 直接删除不符合条件的日志分段
+        - 基于时间的保留策略： 日志分段中最大时间戳来计算
+        - 基于日志大小的保留策略：
+        - 基于日志起始偏移量的保留策略
+    - 日志压缩（Log Compaction）：对于xiangtongkey的不同value值，值保留最后一个版本
+        - 与Redis RDB 持久化模式类似
+        - cleaner-offset-checkpoint 记录清理检查点，通过检查点将日志分成已经清理过的部分和未清理的部分
+        - 删除key后，保留墓碑消息
+- kafka 存储性能优势
+    - 6块7200r/min Raid5 顺序写入速度600MB/s,随机写入速度100KB/s
+    - 操作系统针对线性读写做深层次的优化
+        - 预读 （read-ahead）
+        - 后写 （write-behind）
+    - 顺序写盘速度大于随机写内存速度
+    - kafka采用文件追加方式写入消息，属于典型的顺序写盘操作
+    - 操作系统页缓存优于对象缓存
+        - 对象内存开销是真实数据大小的几倍或更多，空间使用率低下
+        - java垃圾回收随内存的增多变得越来越慢
+        - kafka重启，进程内缓存需要重建，页缓存还是保持有效
+        - kafka大量使用页缓存，是高吞吐的重要因素之一
+    - 不建议开启同步刷盘，可靠性靠多副本机制来保障
+        - 避免内存交换（linux swap分区）
+    - 文件系统推荐使用EXT4或XFS，XFS有更好的写入性能
+    - 零拷贝：数据直接从磁盘文件复制到网卡设备
