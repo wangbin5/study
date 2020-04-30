@@ -1,0 +1,18 @@
+@startuml
+ReentrantLock -> Sync: lock
+Sync -> Sync: 尝试加锁
+alt 加锁不成功
+    Sync -> AQS: acquire
+    AQS -> AQS: tryAcquire 再次尝试加锁
+    alt 加锁不成功
+        AQS -> AQS: 创建节点
+        AQS -> AQS: 加入等待队列
+        AQS -> AQS: 线程阻塞
+    else 加锁成功
+        Sync <- AQS:返回
+    end
+else 加锁成功
+   Sync -> Sync: 设置锁持有线程
+end
+ReentrantLock <- Sync: 返回
+@enduml

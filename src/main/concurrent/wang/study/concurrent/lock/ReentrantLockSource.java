@@ -3,7 +3,7 @@ package wang.study.concurrent.lock;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.*;
 
-public class ReentrantLockSample implements Lock , java.io.Serializable{
+public class ReentrantLockSource implements Lock , java.io.Serializable{
 
     private ReentrantLock lock;
 
@@ -78,7 +78,7 @@ public class ReentrantLockSample implements Lock , java.io.Serializable{
 
     private final Sync sync;
 
-    public ReentrantLockSample(){
+    public ReentrantLockSource(){
         this.sync = new NonfairSync();
     }
 

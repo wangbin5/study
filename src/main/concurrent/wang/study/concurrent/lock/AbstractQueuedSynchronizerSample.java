@@ -4,12 +4,13 @@ import jdk.nashorn.internal.objects.annotations.Getter;
 import jdk.nashorn.internal.objects.annotations.Setter;
 import sun.misc.Unsafe;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.AbstractQueuedSynchronizer;
 import java.util.concurrent.locks.LockSupport;
 
 public class AbstractQueuedSynchronizerSample {
 
-
+    private AtomicInteger auto;
 
     static final class Node {
         static final Node SHARED = new Node();
