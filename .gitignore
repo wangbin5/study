@@ -122,3 +122,5 @@
 /.idea/
 /.idea/
 /.idea/study.iml
+/target/classes/wang/study/concurrent/
+/target/classes/
